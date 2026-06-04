@@ -78,7 +78,7 @@ export function KanbanColumn({ status, leads, onLeadClick, onConvert, onDelete }
 
 // Coluna especial de exclusão (drop zone)
 interface DeleteColumnProps {
-  onDrop: (leadId: string) => void
+  onDrop: () => void
 }
 
 export function DeleteColumn({ onDrop }: DeleteColumnProps) {

@@ -229,7 +229,7 @@ export function KanbanBoard() {
                 onDelete={handleDelete}
               />
             ))}
-            <DeleteColumn onDrop={handleDelete} />
+            <DeleteColumn onDrop={() => {}} />
           </div>
 
           <DragOverlay>
