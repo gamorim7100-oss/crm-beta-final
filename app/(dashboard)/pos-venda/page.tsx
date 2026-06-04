@@ -85,10 +85,12 @@ export default function PosVendaPage() {
         }
       }
 
+      // Agrupa clientes por CPF (boa prática — mesma pessoa pode ter múltiplas cotas)
       const clientGroups = new Map<string, PosVendaItem>()
       for (const c of clientsRes.data || []) {
+        const key = c.cpf || `__no_cpf_${c.id}`
         const phone = c.phone?.replace(/\D/g, '') || ''
-        const existing = clientGroups.get(phone)
+        const existing = clientGroups.get(key)
         if (existing) {
           existing.contractCount++
           existing.contracts.push({
@@ -100,9 +102,11 @@ export default function PosVendaPage() {
             data_fechamento: c.data_fechamento,
             criterio_de_lance: c.criterio_de_lance || undefined,
           })
+          // Mantém o telefone se ainda não tinha
+          if (!existing.phone && phone) existing.phone = phone
         } else {
-          clientGroups.set(phone, {
-            id: `client_${phone || c.id}`,
+          clientGroups.set(key, {
+            id: `client_${key}`,
             name: c.name,
             phone,
             tipo: 'cliente',
