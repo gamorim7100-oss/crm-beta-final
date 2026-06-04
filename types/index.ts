@@ -1,5 +1,5 @@
 export type ConsortiumType = 'automovel' | 'imoveis' | 'outros'
-export type LeadStatus = 'negociacao' | 'reuniao' | 'fechamento' | 'venda_concluida'
+export type LeadStatus = 'negociacao' | 'followup' | 'reuniao' | 'followup2' | 'fechamento' | 'venda_concluida'
 export type ClientStatus = 'ativo' | 'inativo' | 'contemplado'
 export type MessageDirection = 'incoming' | 'outgoing'
 export type MessageStatus = 'PENDING' | 'SENT' | 'RECEIVED' | 'READ' | 'ERROR'

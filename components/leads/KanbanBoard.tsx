@@ -13,7 +13,7 @@ import {
 } from '@dnd-kit/core'
 import { createClient } from '@/lib/supabase/client'
 import { useLeadsStore } from '@/stores/leads.store'
-import { KanbanColumn } from './KanbanColumn'
+import { KanbanColumn, DeleteColumn } from './KanbanColumn'
 import { LeadCard } from './LeadCard'
 import { ChatPanel } from './ChatPanel'
 import { LeadForm } from './LeadForm'
@@ -21,7 +21,8 @@ import { ScheduleMeetingModal } from './ScheduleMeetingModal'
 import type { Lead, LeadStatus } from '@/types'
 import { Plus } from 'lucide-react'
 
-const COLUMNS: LeadStatus[] = ['negociacao', 'reuniao', 'fechamento', 'venda_concluida']
+const COLUMNS: LeadStatus[] = ['negociacao', 'followup', 'reuniao', 'followup2', 'fechamento', 'venda_concluida']
+const DELETE_ZONE = '__delete__'
 
 export function KanbanBoard() {
   const { leads, setLeads, selectedLead, setSelectedLead, updateLeadStatus, setUnreadCount, setPosVendaUnreadCount } =
@@ -56,8 +57,8 @@ export function KanbanBoard() {
       const leadsWithMeta: Lead[] = data
       setLeads(leadsWithMeta)
 
-      const unreadCount = leadsWithMeta.filter((l: Lead) => (l as any).unread_count > 0 && (l as any).status !== 'venda_concluida').length
-      const posVendaUnreadCount = leadsWithMeta.filter((l: Lead) => (l as any).unread_count > 0 && (l as any).status === 'venda_concluida').length
+      const unreadCount = leadsWithMeta.filter((l) => (l as any).unread_count > 0 && l.status !== 'venda_concluida').length
+      const posVendaUnreadCount = leadsWithMeta.filter((l) => (l as any).unread_count > 0 && l.status === 'venda_concluida').length
       setUnreadCount(unreadCount)
       setPosVendaUnreadCount(posVendaUnreadCount)
     }
@@ -68,24 +69,13 @@ export function KanbanBoard() {
 
     const channel = supabase
       .channel('leads-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'leads',
-        },
-        () => loadLeads()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => loadLeads())
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => { supabase.removeChannel(channel) }
   }, [loadLeads, supabase])
 
-  const getColumnLeads = (status: LeadStatus) =>
-    leads.filter((l) => l.status === status)
+  const getColumnLeads = (status: LeadStatus) => leads.filter((l) => l.status === status)
 
   const handleDragStart = (event: DragStartEvent) => {
     const lead = leads.find((l) => l.id === event.active.id)
@@ -100,27 +90,23 @@ export function KanbanBoard() {
     if (!activeLeadData) return
 
     const overId = over.id as string
-    let newStatus: LeadStatus
+    if (overId === DELETE_ZONE) return
 
+    let newStatus: LeadStatus
     if (COLUMNS.includes(overId as LeadStatus)) {
       newStatus = overId as LeadStatus
     } else {
       const overLead = leads.find((l) => l.id === overId)
-      if (overLead) {
-        newStatus = overLead.status
-      } else return
+      if (overLead) newStatus = overLead.status
+      else return
     }
 
     if (activeLeadData.status !== newStatus) {
-      setLeads(
-        leads.map((l) =>
-          l.id === activeLeadData.id ? { ...l, status: newStatus } : l
-        )
-      )
+      setLeads(leads.map((l) => l.id === activeLeadData.id ? { ...l, status: newStatus } : l))
     }
   }
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event
     const prevStatus = activeLead?.status
     setActiveLead(null)
@@ -131,27 +117,31 @@ export function KanbanBoard() {
     const lead = leads.find((l) => l.id === leadId)
     if (!lead) return
 
-    let newStatus: LeadStatus
-    let newPosition = lead.kanban_position
+    // Drop na zona de exclusão
+    if (over.id === DELETE_ZONE) {
+      if (confirm(`Excluir o lead "${lead.name || lead.phone}"?`)) {
+        await handleDelete(lead)
+      } else {
+        loadLeads()
+      }
+      return
+    }
 
+    let newStatus: LeadStatus
     if (COLUMNS.includes(over.id as LeadStatus)) {
       newStatus = over.id as LeadStatus
     } else {
       const overLead = leads.find((l) => l.id === over.id)
-      if (overLead) {
-        newStatus = overLead.status
-      } else return
+      if (overLead) newStatus = overLead.status
+      else return
     }
 
     if (lead.status !== newStatus) {
-      updateLeadStatus(leadId, newStatus, newPosition)
+      updateLeadStatus(leadId, newStatus, lead.kanban_position)
 
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(async () => {
-        await supabase
-          .from('leads')
-          .update({ status: newStatus, updated_at: new Date().toISOString() })
-          .eq('id', leadId)
+        await supabase.from('leads').update({ status: newStatus, updated_at: new Date().toISOString() }).eq('id', leadId)
       }, 500)
     }
 
@@ -166,7 +156,7 @@ export function KanbanBoard() {
     loadLeads()
   }
 
-  const handleConvert = async (lead: Lead) => {
+  const handleConvert = (lead: Lead) => {
     setConvertLead(lead)
     setShowConvertModal(true)
   }
@@ -194,14 +184,7 @@ export function KanbanBoard() {
         .single()
 
       if (client) {
-        await supabase
-          .from('leads')
-          .update({
-            converted_client_id: client.id,
-            status: 'venda_concluida',
-          })
-          .eq('id', convertLead.id)
-
+        await supabase.from('leads').update({ converted_client_id: client.id, status: 'venda_concluida' }).eq('id', convertLead.id)
         await supabase.from('sales').insert({
           user_id: user.id,
           client_id: client.id,
@@ -226,10 +209,7 @@ export function KanbanBoard() {
         <div className="flex items-center justify-between mb-4 shrink-0">
           <h1 className="text-xl font-bold text-text-primary">Leads</h1>
           <button
-            onClick={() => {
-              setEditingLead(null)
-              setShowForm(true)
-            }}
+            onClick={() => { setEditingLead(null); setShowForm(true) }}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg text-sm font-medium hover:from-emerald-400 hover:to-teal-500 transition-all"
           >
             <Plus size={16} />
@@ -237,34 +217,25 @@ export function KanbanBoard() {
           </button>
         </div>
 
-        <DndContext
-          sensors={sensors}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-        >
-          <div className="flex gap-4 flex-1 overflow-x-auto pb-4 kanban-scroll">
+        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+          <div className="flex gap-3 flex-1 overflow-x-auto pb-4 kanban-scroll">
             {COLUMNS.map((status) => (
               <KanbanColumn
                 key={status}
                 status={status}
                 leads={getColumnLeads(status)}
-                onLeadClick={(lead) => {
-                  setSelectedLead(lead)
-                }}
+                onLeadClick={(lead) => setSelectedLead(lead)}
                 onConvert={handleConvert}
                 onDelete={handleDelete}
               />
             ))}
+            <DeleteColumn onDrop={handleDelete} />
           </div>
 
           <DragOverlay>
             {activeLead && (
               <div className="rotate-3 opacity-90">
-                <LeadCard
-                  lead={activeLead}
-                  onClick={() => {}}
-                />
+                <LeadCard lead={activeLead} onClick={() => {}} />
               </div>
             )}
           </DragOverlay>
@@ -281,11 +252,7 @@ export function KanbanBoard() {
             <h2 className="text-lg font-bold text-text-primary mb-4">
               {editingLead ? 'Editar Lead' : 'Novo Lead'}
             </h2>
-            <LeadForm
-              lead={editingLead}
-              onClose={() => setShowForm(false)}
-              onSaved={loadLeads}
-            />
+            <LeadForm lead={editingLead} onClose={() => setShowForm(false)} onSaved={loadLeads} />
           </div>
         </div>
       )}
@@ -304,19 +271,12 @@ export function KanbanBoard() {
             <h2 className="text-lg font-bold text-text-primary mb-2">Converter em Cliente</h2>
             <p className="text-sm text-text-secondary mb-4">
               Deseja converter <strong className="text-text-primary">{convertLead?.name || 'este lead'}</strong> em cliente?
-              Uma venda será registrada automaticamente.
             </p>
             <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowConvertModal(false)}
-                className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors text-sm"
-              >
+              <button onClick={() => setShowConvertModal(false)} className="px-4 py-2 text-text-secondary hover:text-text-primary transition-colors text-sm">
                 Cancelar
               </button>
-              <button
-                onClick={confirmConvert}
-                className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg text-sm font-medium hover:from-emerald-400 hover:to-teal-500 transition-all"
-              >
+              <button onClick={confirmConvert} className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg text-sm font-medium hover:from-emerald-400 hover:to-teal-500 transition-all">
                 Confirmar
               </button>
             </div>
@@ -326,4 +286,3 @@ export function KanbanBoard() {
     </div>
   )
 }
-
