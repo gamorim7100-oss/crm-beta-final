@@ -116,6 +116,8 @@ export function fiscalMonthLabel(year: number, month: number): string {
   return `${names[month - 1]} (16/${String(prevMonth).padStart(2, '0')} — 15/${String(month).padStart(2, '0')})`
 }
 
+export const FATOR_LIQUIDO = 0.83
+
 export async function calcPortfolioTotals(supabase: SupabaseClient, userId: string) {
   const { data: clients } = await supabase
     .from('clients')
@@ -125,9 +127,9 @@ export async function calcPortfolioTotals(supabase: SupabaseClient, userId: stri
 
   const totalCarteira = clients?.reduce((sum, c) => sum + Number(c.contract_value), 0) ?? 0
 
-  const fiscal = getCurrentFiscalMonth()
-  const { start } = getFiscalMonthRange(fiscal.year, fiscal.month)
-  const competenciaMes = localDateStr(start)
+  // Usa o 5º dia útil para decidir se mostra mês atual ou projeção do próximo
+  const { year, month } = getSalaryFiscalMonth()
+  const competenciaMes = `${year}-${String(month).padStart(2, '0')}-01`
 
   const { data: schedule } = await supabase
     .from('payment_schedule')
@@ -135,11 +137,13 @@ export async function calcPortfolioTotals(supabase: SupabaseClient, userId: stri
     .in('client_id', clients?.map((c) => c.id) ?? [])
     .eq('competencia', competenciaMes)
 
-  const totalPrevisto = schedule?.reduce((sum, s) => sum + Number(s.valor), 0) ?? 0
-  const totalRecebido =
-    schedule?.filter((s) => s.pago).reduce((sum, s) => sum + Number(s.valor), 0) ?? 0
+  // × 0,83: fator líquido aplicado sobre a soma de parcelas (conforme planilha Ademicon)
+  const totalBruto = schedule?.reduce((sum, s) => sum + Number(s.valor), 0) ?? 0
+  const totalPrevisto = Math.round(totalBruto * FATOR_LIQUIDO * 100) / 100
+  const totalRecebidoBruto = schedule?.filter((s) => s.pago).reduce((sum, s) => sum + Number(s.valor), 0) ?? 0
+  const totalRecebido = Math.round(totalRecebidoBruto * FATOR_LIQUIDO * 100) / 100
 
-  return { totalCarteira, totalPrevisto, totalRecebido }
+  return { totalCarteira, totalPrevisto, totalRecebido, competenciaMes }
 }
 
 const COMMISSION_RATES: Record<string, number> = {

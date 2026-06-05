@@ -48,8 +48,8 @@ export function SalaryCard() {
         .in('client_id', clientIds)
         .eq('competencia', competencia)
 
-      const monthTotal = schedule?.reduce((sum, s) => sum + Number(s.valor), 0) ?? 0
-      setTotal(monthTotal)
+      const bruto = schedule?.reduce((sum, s) => sum + Number(s.valor), 0) ?? 0
+      setTotal(Math.round(bruto * 0.83 * 100) / 100)
     }
 
     load()
