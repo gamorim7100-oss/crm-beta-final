@@ -243,7 +243,9 @@ export function KanbanBoard() {
       </div>
 
       {selectedLead && (
-        <ChatPanel lead={selectedLead} onClose={() => setSelectedLead(null)} onDelete={handleDelete} />
+        <div className="w-[400px] shrink-0 py-1 pr-1">
+          <ChatPanel lead={selectedLead} onClose={() => setSelectedLead(null)} onDelete={handleDelete} />
+        </div>
       )}
 
       {showForm && (

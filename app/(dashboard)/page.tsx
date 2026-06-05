@@ -31,18 +31,18 @@ export default function DashboardPage() {
 
       const [monthSalesRes, totalSalesRes, activeClientsRes, leadsRes] = await Promise.all([
         supabase
-          .from('sales')
-          .select('value')
+          .from('clients')
+          .select('contract_value')
           .eq('user_id', user.id)
-          .gte('sale_date', localDateStr(startOfMonth))
-          .lte('sale_date', localDateStr(endOfMonth)),
+          .gte('data_fechamento', localDateStr(startOfMonth))
+          .lte('data_fechamento', localDateStr(endOfMonth)),
         supabase
-          .from('sales')
-          .select('value')
+          .from('clients')
+          .select('contract_value')
           .eq('user_id', user.id),
         supabase
           .from('clients')
-          .select('id', { count: 'exact', head: true })
+          .select('id, cpf')
           .eq('user_id', user.id)
           .eq('status', 'ativo'),
         supabase
@@ -51,8 +51,8 @@ export default function DashboardPage() {
           .eq('user_id', user.id),
       ])
 
-      const monthTotal = monthSalesRes.data?.reduce((sum, s) => sum + Number(s.value), 0) ?? 0
-      const totalSold = totalSalesRes.data?.reduce((sum, s) => sum + Number(s.value), 0) ?? 0
+      const monthTotal = monthSalesRes.data?.reduce((sum, s) => sum + Number(s.contract_value), 0) ?? 0
+      const totalSold = totalSalesRes.data?.reduce((sum, s) => sum + Number(s.contract_value), 0) ?? 0
 
       const totalLeads = leadsRes.data?.length ?? 0
       const convertedLeads = leadsRes.data?.filter(
@@ -62,15 +62,21 @@ export default function DashboardPage() {
       setStats({
         monthSales: monthTotal,
         totalSales: totalSold,
-        activeClients: activeClientsRes.count ?? 0,
+        activeClients: new Set((activeClientsRes.data ?? []).map((c) => c.cpf ? c.cpf.replace(/\D/g, '') : `__${c.id}`)).size,
         conversionRate: calcConversionRate(totalLeads, convertedLeads),
       })
       setLoading(false)
     }
 
     loadStats()
-    const interval = setInterval(loadStats, 300000)
-    return () => clearInterval(interval)
+
+    const channel = supabase
+      .channel('dashboard-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'clients' }, loadStats)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, loadStats)
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [supabase])
 
   if (loading) {
@@ -100,7 +106,9 @@ export default function DashboardPage() {
           animateValue={stats.monthSales}
           formatValue={formatCurrency}
           icon={BarChart3}
-          color="bg-emerald-500/20"
+          gradient="linear-gradient(135deg, #10B981, #059669)"
+          iconColor="text-white"
+          progressColor="#10B981"
           subtitle="Vendas deste período"
         />
 
@@ -110,7 +118,9 @@ export default function DashboardPage() {
           animateValue={stats.totalSales}
           formatValue={formatCurrency}
           icon={TrendingUp}
-          color="bg-emerald-500/20"
+          gradient="linear-gradient(135deg, #14B8A6, #0D9488)"
+          iconColor="text-white"
+          progressColor="#14B8A6"
           subtitle="Histórico completo"
         />
 
@@ -120,8 +130,10 @@ export default function DashboardPage() {
           animateValue={stats.conversionRate}
           formatValue={(v) => `${v.toFixed(1)}%`}
           icon={Target}
-          color="bg-purple-500/20"
+          gradient="linear-gradient(135deg, #8B5CF6, #7C3AED)"
+          iconColor="text-white"
           progress={stats.conversionRate}
+          progressColor="#8B5CF6"
         />
 
         <KpiCard
@@ -129,7 +141,9 @@ export default function DashboardPage() {
           value={stats.activeClients}
           animateValue={stats.activeClients}
           icon={UserCheck}
-          color="bg-blue-500/20"
+          gradient="linear-gradient(135deg, #3B82F6, #2563EB)"
+          iconColor="text-white"
+          progressColor="#3B82F6"
         />
 
       </div>

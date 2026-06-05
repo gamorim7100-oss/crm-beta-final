@@ -10,26 +10,44 @@ function getEventFromUrl(url: string): string | null {
   return slug.split('/').pop()?.replace(/-/g, '_').toUpperCase() || null
 }
 
+function isPersonalJid(jid: string): boolean {
+  if (!jid) return false
+  if (jid.includes('@g.us')) return false        // grupos
+  if (jid.includes('@broadcast')) return false   // listas de transmissão e status
+  if (jid.includes('@newsletter')) return false  // canais/newsletters
+  if (jid === 'status@broadcast') return false   // status do WhatsApp
+  return true
+}
+
 function extractPhone(jid: string): string {
-  return jid.replace(/@s\.whatsapp\.net$/, '').replace(/@g\.us$/, '').replace(/@lid$/, '')
+  return jid
+    .replace(/@s\.whatsapp\.net$/, '')
+    .replace(/@g\.us$/, '')
+    .replace(/@lid$/, '')
+    .replace(/@broadcast$/, '')
+    .replace(/@newsletter$/, '')
+    .replace(/:\d+$/, '') // remove device suffix (ex: 5511...@s.whatsapp.net:2)
 }
 
 async function processMessage(supabase: any, message: any) {
   const rawJid = message.key?.remoteJid || ''
-  if (rawJid.includes('@g.us')) return
+
+  if (!isPersonalJid(rawJid)) return
+  if (message.key?.fromMe) return
 
   const altJid = message.key?.remoteJidAlt || ''
   const rawPhone = extractPhone(rawJid)
-  const altPhone = extractPhone(altJid)
+  const altPhone = altJid ? extractPhone(altJid) : ''
+
+  // Para JIDs @lid, prefere o número alt; sem alt descarta (não é número real)
+  if (rawJid.includes('@lid') && !altPhone) return
   const phone = (rawJid.includes('@lid') && altPhone) ? altPhone : rawPhone
 
-  if (!phone) {
-    if (rawJid) console.log('Webhook: LID phone no alt for', rawJid)
-    return
-  }
-  if (message.key?.fromMe) return
+  if (!phone || phone.length < 8) return
 
   const phoneClean = phone.replace(/\D/g, '')
+  if (phoneClean.length < 8 || phoneClean.length > 15) return
+
   const phones = phoneVariants(phoneClean)
 
   const pushName = message.pushName || message.notifyName || null
@@ -49,8 +67,11 @@ async function processMessage(supabase: any, message: any) {
     msg.extendedTextMessage?.text ||
     msg.imageMessage?.caption ||
     msg.videoMessage?.caption ||
-    (mediaType ? `[${mediaType}]` : null)
+    (mediaType ? `[${mediaType}]` : null) ||
+    (msg.stickerMessage ? '[sticker]' : null) ||
+    (msg.reactionMessage ? null : null) // reações não geram lead/mensagem
 
+  // Reações e mensagens sem conteúdo identificável são ignoradas
   if (!content) return
 
   const { data: clientRows } = await supabase
@@ -87,7 +108,7 @@ async function processMessage(supabase: any, message: any) {
 
       if (profile) {
         const storedPhone = phoneClean.startsWith('55') ? phoneClean.slice(2) : phoneClean
-        console.log('Webhook: creating pos-venda lead for client', existingClient.id, 'phone', storedPhone)
+        console.log('Webhook: creating pos-venda lead for client', existingClient.id)
         const { data: newLead } = await supabase
           .from('leads')
           .insert({
@@ -101,7 +122,7 @@ async function processMessage(supabase: any, message: any) {
           .single()
 
         if (newLead) {
-          console.log('Webhook: created pos-venda lead', newLead.id, 'for client', storedPhone)
+          console.log('Webhook: created pos-venda lead', newLead.id)
           clientLead = { id: newLead.id, user_id: newLead.user_id, name: newLead.name }
         }
       }
@@ -124,7 +145,7 @@ async function processMessage(supabase: any, message: any) {
 
     if (profile) {
       const storedPhone = phoneClean.startsWith('55') ? phoneClean.slice(2) : phoneClean
-      console.log('Webhook: creating lead for phone', storedPhone, 'pushName', pushName)
+      console.log('Webhook: creating lead for new contact')
       const { data: newLead } = await supabase
         .from('leads')
         .insert({
@@ -192,6 +213,16 @@ async function insertMessageAndUpdateLead(supabase: any, lead: any, content: str
 
 export async function POST(request: Request) {
   try {
+    const incomingKey = request.headers.get('apikey') || request.headers.get('x-api-key')
+    const validKeys = [
+      process.env.EVOLUTION_API_KEY,
+      process.env.EVOLUTION_WEBHOOK_SECRET,
+    ].filter(Boolean)
+
+    if (incomingKey && validKeys.length > 0 && !validKeys.includes(incomingKey)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const event = body.event || getEventFromUrl(request.url)
 

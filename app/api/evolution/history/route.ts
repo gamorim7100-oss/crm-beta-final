@@ -1,12 +1,31 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 
-const EVOLUTION_API = process.env.EVOLUTION_API_URL || 'http://localhost:8080'
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || 'markello-crm-key-2026'
+const EVOLUTION_API = process.env.EVOLUTION_API_URL!
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY!
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE_NAME || 'markello'
 
 export async function POST(req: Request) {
   try {
+    const cookieStore = cookies()
+    const anonSupabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value },
+          set(_name: string, _value: string, _options: CookieOptions) {},
+          remove(_name: string, _options: CookieOptions) {},
+        },
+      }
+    )
+    const { data: { user } } = await anonSupabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { phone, leadId } = await req.json()
     if (!phone || !leadId) {
       return NextResponse.json({ error: 'phone and leadId required' }, { status: 400 })
@@ -69,6 +88,17 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('user_id')
+      .eq('id', leadId)
+      .eq('user_id', user.id)
+      .single()
+
+    if (!lead) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const { data: existingMsgs } = await supabase
       .from('messages')

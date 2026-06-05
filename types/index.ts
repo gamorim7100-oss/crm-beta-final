@@ -51,6 +51,7 @@ export interface Lead {
   kanban_position: number
   notes?: string
   converted_client_id?: string
+  avatar_url?: string | null
   created_at: string
   updated_at: string
   last_message_text?: string
@@ -66,7 +67,7 @@ export interface Message {
   whatsapp_message_id?: string
   media_url?: string
   media_type?: string
-  message_data?: any
+  message_data?: Record<string, unknown> | null
   status?: MessageStatus
   read_at?: string
   timestamp: string

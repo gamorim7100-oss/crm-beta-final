@@ -3,19 +3,21 @@
 @tailwind utilities;
 
 :root {
-  --bg-primary: #FFFFFF;
-  --bg-secondary: #F3F4F6;
+  --bg-primary: #F0F2F5;
+  --bg-secondary: #E8EBF0;
   --bg-card: #FFFFFF;
-  --bg-card-hover: #F3F4F6;
-  --bg-input: #F9FAFB;
-  --border: rgba(0,0,0,0.06);
-  --text-primary: #1A1A2E;
-  --text-secondary: #6B7280;
+  --bg-card-hover: #F5F7FA;
+  --bg-input: #F5F7FA;
+  --border: rgba(0,0,0,0.07);
+  --text-primary: #0F172A;
+  --text-secondary: #64748B;
   --accent-green: #10B981;
   --accent-blue: #3B82F6;
   --accent-yellow: #F59E0B;
   --accent-purple: #8B5CF6;
   --sidebar-width: 240px;
+  --card-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.06);
+  --card-shadow-hover: 0 4px 12px rgba(0,0,0,0.08), 0 16px 40px rgba(0,0,0,0.08);
 }
 
 .dark {
@@ -316,6 +318,17 @@ body {
 
 .kanban-column {
   min-height: 400px;
+}
+
+/* WhatsApp-style chat background */
+.chat-bg {
+  background-color: #e5ddd5;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c9b99a' fill-opacity='0.18'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+.dark .chat-bg {
+  background-color: #0d1418;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
 }
 
 .kanban-scroll::-webkit-scrollbar {

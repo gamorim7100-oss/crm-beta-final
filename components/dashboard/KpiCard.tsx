@@ -1,14 +1,7 @@
 'use client'
 
 import { type LucideIcon } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { AnimatedCounter } from '@/components/shared/AnimatedCounter'
-
-const PROGRESS_COLORS: Record<string, string> = {
-  'bg-emerald-500/20': '#10B981',
-  'bg-purple-500/20': '#8B5CF6',
-  'bg-blue-500/20': '#3B82F6',
-}
 
 interface KpiCardProps {
   title: string
@@ -17,43 +10,72 @@ interface KpiCardProps {
   formatValue?: (v: number) => string
   subtitle?: string
   icon: LucideIcon
-  color: string
+  gradient: string
+  iconColor: string
   progress?: number
+  progressColor?: string
   children?: React.ReactNode
 }
 
-export function KpiCard({ title, value, animateValue, formatValue, subtitle, icon: Icon, color, progress, children }: KpiCardProps) {
+export function KpiCard({
+  title,
+  value,
+  animateValue,
+  formatValue,
+  subtitle,
+  icon: Icon,
+  gradient,
+  iconColor,
+  progress,
+  progressColor = '#10B981',
+  children,
+}: KpiCardProps) {
   return (
-    <div className="bg-bg-card border border-border rounded-xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.3)] hover:shadow-[0_8px_32px_rgba(0,0,0,0.35)] hover:-translate-y-0.5 transition-all duration-200">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="text-xs text-text-secondary font-medium uppercase tracking-wider">{title}</p>
-          <p className="text-2xl font-bold text-text-primary mt-1 tabular-nums">
-            {animateValue !== undefined ? (
-              <AnimatedCounter to={animateValue} formatFn={formatValue} />
-            ) : (
-              value
-            )}
-          </p>
-          {subtitle && <p className="text-xs text-text-secondary mt-0.5">{subtitle}</p>}
+    <div className="relative bg-bg-card border border-border rounded-2xl p-5 overflow-hidden hover:-translate-y-1 hover:shadow-xl transition-all duration-300 group">
+      {/* accent glow blob */}
+      <div
+        className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-10 blur-2xl group-hover:opacity-20 transition-opacity duration-300"
+        style={{ background: progressColor }}
+      />
+
+      <div className="relative flex items-start justify-between mb-4">
+        {/* icon badge */}
+        <div
+          className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg"
+          style={{ background: gradient }}
+        >
+          <Icon size={22} className={iconColor} />
         </div>
-        <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', color)}>
-          <Icon size={20} className="text-white" />
-        </div>
+
+        {typeof progress === 'number' && (
+          <span className="text-xs font-semibold px-2 py-1 rounded-full" style={{ color: progressColor, background: `${progressColor}18` }}>
+            {progress.toFixed(1)}%
+          </span>
+        )}
       </div>
+
+      <p className="text-xs font-semibold text-text-secondary uppercase tracking-widest mb-1">{title}</p>
+      <p className="text-3xl font-extrabold text-text-primary tabular-nums leading-tight">
+        {animateValue !== undefined ? (
+          <AnimatedCounter to={animateValue} formatFn={formatValue} />
+        ) : (
+          value
+        )}
+      </p>
+      {subtitle && <p className="text-xs text-text-secondary mt-1">{subtitle}</p>}
+
       {typeof progress === 'number' && (
-        <div className="mt-3">
-          <div className="h-1.5 bg-bg-secondary/20 rounded-full overflow-hidden">
+        <div className="mt-4">
+          <div className="h-1 bg-border rounded-full overflow-hidden">
             <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(progress, 100)}%`, backgroundColor: PROGRESS_COLORS[color] || '#6B7280' }}
+              className="h-full rounded-full transition-all duration-700"
+              style={{ width: `${Math.min(progress, 100)}%`, background: `linear-gradient(90deg, ${progressColor}99, ${progressColor})` }}
             />
           </div>
-          <p className="text-xs text-text-secondary mt-1">{progress.toFixed(1)}%</p>
         </div>
       )}
+
       {children}
     </div>
   )
 }
-

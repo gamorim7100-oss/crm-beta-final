@@ -4,21 +4,8 @@ import { useEffect, useState } from 'react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, getFiscalMonthRange, fiscalMonthLabel, localDateStr } from '@/lib/business-rules'
+import { CONSORTIUM_COLORS, CONSORTIUM_LABELS } from '@/lib/constants'
 import { TrendingUp } from 'lucide-react'
-
-const COLORS: Record<string, string> = {
-  automovel: '#3B82F6',
-  veiculos: '#3B82F6',
-  imoveis: '#10B981',
-  outros: '#F59E0B',
-}
-
-const LABELS: Record<string, string> = {
-  automovel: 'Automóvel',
-  veiculos: 'Veículos',
-  imoveis: 'Imóveis',
-  outros: 'Outros',
-}
 
 export function SalesChart() {
   const [data, setData] = useState<{ name: string; qty: number; total: number; consortium_type: string }[]>([])
@@ -31,13 +18,13 @@ export function SalesChart() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const { data: sales } = await supabase
-        .from('sales')
-        .select('sale_date')
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('data_fechamento')
         .eq('user_id', user.id)
-        .order('sale_date', { ascending: true })
+        .order('data_fechamento', { ascending: true })
 
-      if (!sales || sales.length === 0) return
+      if (!clients || clients.length === 0) return
 
       function getFiscalYearMonth(dateStr: string): string {
         const d = new Date(dateStr)
@@ -51,8 +38,8 @@ export function SalesChart() {
 
       const seen = new Set<string>()
       const monthList: string[] = []
-      for (const s of sales) {
-        const m = s.sale_date ? getFiscalYearMonth(s.sale_date) : null
+      for (const c of clients) {
+        const m = c.data_fechamento ? getFiscalYearMonth(c.data_fechamento) : null
         if (m && !seen.has(m)) {
           seen.add(m)
           monthList.push(m)
@@ -75,21 +62,21 @@ export function SalesChart() {
       const month = Number(monthStr)
       const { start, end } = getFiscalMonthRange(year, month)
 
-      const { data: sales } = await supabase
-        .from('sales')
-        .select('consortium_type, value')
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('consortium_type, contract_value')
         .eq('user_id', user.id)
-        .gte('sale_date', localDateStr(start))
-        .lte('sale_date', localDateStr(end))
+        .gte('data_fechamento', localDateStr(start))
+        .lte('data_fechamento', localDateStr(end))
 
-      if (!sales) return
+      if (!clients) return
 
-      const grouped = sales.reduce(
-        (acc, sale) => {
-          const key = sale.consortium_type
-          if (!acc[key]) acc[key] = { name: LABELS[key] || key, qty: 0, total: 0, consortium_type: key }
+      const grouped = clients.reduce(
+        (acc, client) => {
+          const key = client.consortium_type
+          if (!acc[key]) acc[key] = { name: CONSORTIUM_LABELS[key] || key, qty: 0, total: 0, consortium_type: key }
           acc[key].qty++
-          acc[key].total += Number(sale.value)
+          acc[key].total += Number(client.contract_value)
           return acc
         },
         {} as Record<string, { name: string; qty: number; total: number; consortium_type: string }>
@@ -142,11 +129,11 @@ export function SalesChart() {
                   outerRadius={80}
                   dataKey="qty"
                   nameKey="name"
-                  stroke="#1F2937"
-                  strokeWidth={2}
+                  stroke="transparent"
+                  strokeWidth={0}
                 >
-                  {data.map((entry, i) => (
-                    <Cell key={entry.name} fill={COLORS[entry.consortium_type] || '#6B7280'} />
+                  {data.map((entry) => (
+                    <Cell key={entry.name} fill={CONSORTIUM_COLORS[entry.consortium_type] || '#6B7280'} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -172,8 +159,8 @@ export function SalesChart() {
                   itemStyle={{ color: '#F9FAFB' }}
                 />
                 <Bar dataKey="total" radius={[4, 4, 0, 0]} background={{ fill: 'rgba(255,255,255,0.03)' }}>
-                  {data.map((entry, i) => (
-                    <Cell key={entry.name} fill={COLORS[entry.consortium_type] || '#6B7280'} />
+                  {data.map((entry) => (
+                    <Cell key={entry.name} fill={CONSORTIUM_COLORS[entry.consortium_type] || '#6B7280'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -194,4 +181,3 @@ export function SalesChart() {
     </div>
   )
 }
-

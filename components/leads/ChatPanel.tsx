@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Send, X, Paperclip, User, Check, CheckCheck, Trash2, Sparkles, Image, Mic, Video, FileText } from 'lucide-react'
+import { Send, X, User, Check, CheckCheck, Trash2, Image, Mic, Video, FileText } from 'lucide-react'
 import { AudioPlayer } from './AudioPlayer'
 import { createClient } from '@/lib/supabase/client'
 import type { Lead, Message } from '@/types'
@@ -22,6 +22,9 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
   const [suggestion, setSuggestion] = useState('')
   const [suggesting, setSuggesting] = useState(false)
   const [sendingMedia, setSendingMedia] = useState(false)
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(
+    lead.avatar_url && lead.avatar_url !== 'none' ? lead.avatar_url : null
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [mediaPreview, setMediaPreview] = useState<{ data: string; type: string; name: string } | null>(null)
   const [isRecording, setIsRecording] = useState(false)
@@ -31,11 +34,27 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatContainerRef = useRef<HTMLDivElement>(null)
+  const scrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [supabase] = useState(() => createClient())
 
+  // Busca foto de perfil do WhatsApp
   useEffect(() => {
-    const loadMessages = async () => {
-      setLoading(true)
+    if (avatarUrl || lead.avatar_url === 'none') return
+    fetch('/api/evolution/profile-picture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId: lead.id }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.url) setAvatarUrl(d.url) })
+      .catch(() => {})
+  }, [lead.id, avatarUrl])
+
+  useEffect(() => {
+    let lastTimestamp = ''
+
+    const fetchMessages = async (initial = false) => {
+      if (initial) setLoading(true)
       const { data } = await supabase
         .from('messages')
         .select('*')
@@ -43,8 +62,32 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
         .order('timestamp', { ascending: true })
         .limit(50)
 
-      if (data) setMessages(data)
-      setLoading(false)
+      if (data) {
+        setMessages(data)
+        if (data.length > 0) lastTimestamp = data[data.length - 1].timestamp
+      }
+      if (initial) setLoading(false)
+    }
+
+    // Polling: verifica novas mensagens a cada 4 segundos como fallback
+    const pollNewMessages = async () => {
+      if (!lastTimestamp) return
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('lead_id', lead.id)
+        .gt('timestamp', lastTimestamp)
+        .order('timestamp', { ascending: true })
+
+      if (data?.length) {
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.id))
+          const newMsgs = data.filter((m) => !existingIds.has(m.id))
+          if (!newMsgs.length) return prev
+          lastTimestamp = data[data.length - 1].timestamp
+          return [...prev, ...newMsgs]
+        })
+      }
     }
 
     fetch('/api/messages/read', {
@@ -53,40 +96,42 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
       body: JSON.stringify({ leadId: lead.id }),
     }).catch(() => {})
 
-    loadMessages()
+    fetchMessages(true)
 
+    // Real-time via Supabase (funciona se a tabela estiver na publication)
     const channel = supabase
       .channel(`messages:${lead.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `lead_id=eq.${lead.id}`,
-        },
-        (payload: any) => {
-          setMessages((prev) => [...prev, payload.new as Message])
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `lead_id=eq.${lead.id}`,
-        },
-        (payload: any) => {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === payload.new.id ? (payload.new as Message) : m))
-          )
-        }
-      )
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `lead_id=eq.${lead.id}`,
+      }, (payload: any) => {
+        const msg = payload.new as Message
+        setMessages((prev) => {
+          if (prev.find((m) => m.id === msg.id)) return prev
+          if (msg.timestamp > lastTimestamp) lastTimestamp = msg.timestamp
+          return [...prev, msg]
+        })
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'messages',
+        filter: `lead_id=eq.${lead.id}`,
+      }, (payload: any) => {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === payload.new.id ? (payload.new as Message) : m))
+        )
+      })
       .subscribe()
+
+    // Fallback: polling a cada 4s
+    const pollInterval = setInterval(pollNewMessages, 4000)
 
     return () => {
       supabase.removeChannel(channel)
+      clearInterval(pollInterval)
     }
   }, [lead.id, supabase])
 
@@ -235,117 +280,102 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
     }
   }
 
-  const handleScroll = async () => {
+  const handleScroll = () => {
     const container = chatContainerRef.current
     if (!container || container.scrollTop > 0) return
 
-    const scrollHeightBefore = container.scrollHeight
+    if (scrollDebounceRef.current) clearTimeout(scrollDebounceRef.current)
+    scrollDebounceRef.current = setTimeout(async () => {
+      const scrollHeightBefore = container.scrollHeight
 
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('lead_id', lead.id)
-      .order('timestamp', { ascending: false })
-      .lt('timestamp', messages[0]?.timestamp || '')
-      .limit(50)
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('lead_id', lead.id)
+        .order('timestamp', { ascending: false })
+        .lt('timestamp', messages[0]?.timestamp || '')
+        .limit(50)
 
-    if (data?.length) {
-      setMessages((prev) => [...data.reverse(), ...prev])
-      requestAnimationFrame(() => {
-        if (chatContainerRef.current) {
-          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight - scrollHeightBefore
-        }
-      })
-    }
+      if (data?.length) {
+        setMessages((prev) => [...data.reverse(), ...prev])
+        requestAnimationFrame(() => {
+          if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight - scrollHeightBefore
+          }
+        })
+      }
+    }, 300)
   }
 
   return (
-    <div className={`bg-bg-secondary ${fullWidth ? 'border-0 w-full' : 'w-full lg:w-[400px] border-l border-white/[0.06]'} flex flex-col h-full`}>
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06]">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center shrink-0">
-          <User size={18} className="text-white" />
+    <div className={`${fullWidth ? 'w-full border-l border-border' : 'w-full lg:w-[400px] border border-border rounded-xl shadow-lg overflow-hidden'} flex flex-col h-full bg-bg-card`}>
+
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 bg-bg-card border-b border-border shrink-0">
+        <div className="w-9 h-9 rounded-full shrink-0 shadow-sm overflow-hidden bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center">
+          {avatarUrl
+            ? <img src={avatarUrl} alt={lead.name || ''} className="w-full h-full object-cover" onError={() => setAvatarUrl(null)} />
+            : <User size={16} className="text-white" />
+          }
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-white truncate">
-            {lead.name || 'Sem nome'}
-          </p>
-          <p className="text-xs text-gray-400">{formatPhone(lead.phone)}</p>
+          <p className="text-sm font-semibold text-text-primary truncate leading-tight">{lead.name || 'Sem nome'}</p>
+          <p className="text-xs text-text-secondary">{formatPhone(lead.phone)}</p>
         </div>
         {onDelete && (
           <button
-            onClick={() => {
-              if (confirm('Excluir este lead?')) {
-                onDelete(lead)
-              }
-            }}
-            className="text-gray-400 hover:text-red-400 p-1 rounded-lg hover:bg-red-400/10 transition-colors"
+            onClick={() => { if (confirm('Excluir este lead?')) onDelete(lead) }}
+            className="text-text-secondary hover:text-red-400 p-1.5 rounded-lg hover:bg-red-400/10 transition-colors"
           >
-            <Trash2 size={16} />
+            <Trash2 size={15} />
           </button>
         )}
-        <button
-          onClick={onClose}
-          className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
-        >
-          <X size={18} />
+        <button onClick={onClose} className="text-text-secondary hover:text-text-primary p-1.5 rounded-lg hover:bg-border transition-colors">
+          <X size={16} />
         </button>
       </div>
 
-      <div
-        ref={chatContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-3 space-y-3 kanban-scroll"
-      >
+      {/* Messages */}
+      <div ref={chatContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-2 kanban-scroll chat-bg">
         {loading ? (
           <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="flex gap-2">
-                <div className="w-8 h-8 rounded-full bg-white/5 animate-pulse shrink-0" />
-                <div className="flex-1">
-                  <div className="h-8 bg-white/5 rounded-lg animate-pulse w-3/4" />
-                </div>
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className={`flex ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
+                <div className="h-9 bg-white/40 rounded-2xl animate-pulse" style={{ width: `${45 + (i * 13) % 30}%` }} />
               </div>
             ))}
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-sm text-gray-500">
-            Nenhuma mensagem ainda. Envie uma mensagem para iniciar a conversa.
+          <div className="flex flex-col items-center justify-center h-full gap-2">
+            <div className="bg-white/70 rounded-xl px-4 py-2 shadow-sm">
+              <p className="text-sm text-gray-500">Nenhuma mensagem ainda</p>
+            </div>
           </div>
         ) : (
           messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
-            >
+            <div key={msg.id} className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}>
               <div
-                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm shadow-sm ${
                   msg.direction === 'outgoing'
-                    ? 'bg-emerald-600 text-white rounded-br-sm'
-                    : 'bg-[#252E3E] text-gray-200 rounded-bl-sm'
+                    ? 'bg-[#dcf8c6] text-gray-800 rounded-br-sm dark:bg-emerald-600 dark:text-white'
+                    : 'bg-white text-gray-800 rounded-bl-sm shadow-sm dark:bg-[#1f2c34] dark:text-gray-100'
                 }`}
               >
                 {msg.media_url && msg.media_type === 'image' && (
                   <img
                     src={`/api/media/decrypt?messageId=${msg.id}`}
                     alt="Imagem"
-                    className="max-w-full rounded-lg mb-1 cursor-pointer hover:opacity-90 transition-opacity"
+                    className="max-w-full rounded-xl mb-1.5 cursor-pointer hover:opacity-90 transition-opacity"
                     onClick={() => window.open(`/api/media/decrypt?messageId=${msg.id}`, '_blank')}
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src = msg.media_url || ''
-                    }}
+                    onError={(e) => { (e.target as HTMLImageElement).src = msg.media_url || '' }}
                   />
                 )}
                 {msg.media_url && msg.media_type === 'audio' && (
                   <AudioPlayer src={msg.direction === 'outgoing' ? `data:audio/webm;codecs=opus;base64,${msg.media_url}` : `/api/media/decrypt?messageId=${msg.id}`} />
                 )}
                 {msg.media_url && msg.media_type === 'video' && (
-                  <div className="mb-1 rounded-lg overflow-hidden">
-                    <video
-                      controls
-                      preload="metadata"
-                      className="max-w-full rounded-lg"
-                      style={{ maxHeight: '300px' }}
-                    >
+                  <div className="mb-1.5 rounded-xl overflow-hidden">
+                    <video controls preload="metadata" className="max-w-full rounded-xl" style={{ maxHeight: '260px' }}>
                       <source src={`/api/media/decrypt?messageId=${msg.id}`} />
                     </video>
                   </div>
@@ -355,44 +385,24 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
                     href={`/api/media/decrypt?messageId=${msg.id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 mb-1 p-2 bg-black/20 rounded-lg hover:bg-black/30 transition-colors group"
+                    className={`flex items-center gap-2 mb-1.5 p-2.5 rounded-xl transition-colors ${msg.direction === 'outgoing' ? 'bg-white/10 hover:bg-white/20' : 'bg-border hover:bg-border/70'}`}
                   >
-                    <svg viewBox="0 0 24 24" className="w-5 h-5 shrink-0 text-emerald-400" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <polyline points="14 2 14 8 20 8" />
-                      <line x1="16" y1="13" x2="8" y2="13" />
-                      <line x1="16" y1="17" x2="8" y2="17" />
-                      <polyline points="10 9 9 9 8 9" />
-                    </svg>
-                    <span className="text-xs truncate text-gray-300 group-hover:text-white transition-colors">
-                      {msg.content === '[document]' ? 'Documento' : msg.content}
-                    </span>
+                    <FileText size={16} className={msg.direction === 'outgoing' ? 'text-white/80' : 'text-emerald-500'} />
+                    <span className="text-xs truncate">{msg.content === '[document]' ? 'Documento' : msg.content}</span>
                   </a>
                 )}
                 {msg.media_type && msg.content.startsWith('[') ? null : (
-                  <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  <p className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
                 )}
-                <div className="flex items-center gap-1 mt-1">
-                  <span
-                    className={`text-[10px] ${
-                      msg.direction === 'outgoing' ? 'text-emerald-200' : 'text-gray-500'
-                    }`}
-                  >
-                    {new Date(msg.timestamp).toLocaleTimeString('pt-BR', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                <div className="flex items-center justify-end gap-1 mt-1">
+                  <span className={`text-[10px] ${msg.direction === 'outgoing' ? 'text-gray-500 dark:text-white/60' : 'text-gray-400'}`}>
+                    {new Date(msg.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                   </span>
                   {msg.direction === 'outgoing' && (
-                    msg.status === 'READ' ? (
-                      <CheckCheck size={12} className="text-blue-400" />
-                    ) : msg.status === 'RECEIVED' || msg.status === 'SENT' ? (
-                      <CheckCheck size={12} className="text-emerald-300" />
-                    ) : msg.status === 'PENDING' ? (
-                      <Check size={12} className="text-emerald-300/60" />
-                    ) : msg.status === 'ERROR' ? (
-                      <span className="text-[10px] text-red-400">Erro</span>
-                    ) : null
+                    msg.status === 'READ' ? <CheckCheck size={11} className="text-blue-200" /> :
+                    msg.status === 'RECEIVED' || msg.status === 'SENT' ? <CheckCheck size={11} className="text-white/70" /> :
+                    msg.status === 'PENDING' ? <Check size={11} className="text-white/40" /> :
+                    msg.status === 'ERROR' ? <span className="text-[10px] text-red-300">Erro</span> : null
                   )}
                 </div>
               </div>
@@ -402,208 +412,153 @@ export function ChatPanel({ lead, onClose, onDelete, fullWidth }: ChatPanelProps
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="p-4 border-t border-white/[0.06] relative">
+      {/* Input area */}
+      <div className="bg-bg-card border-t border-border px-3 py-3 shrink-0">
+
+        {/* Alex suggestion — loading */}
         {suggesting && (
-          <div className="absolute bottom-full left-0 right-0 mx-4 mb-2 flex items-start gap-3 animate-in slide-in-from-bottom-2 fade-in duration-300">
-            <div className="shrink-0 flex flex-col items-center gap-1 pt-1">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 animate-bounce-sm">
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="11" width="18" height="10" rx="2" />
-                  <circle cx="8" cy="14" r="0.5" fill="currentColor" />
-                  <circle cx="12" cy="14" r="0.5" fill="currentColor" />
-                  <circle cx="16" cy="14" r="0.5" fill="currentColor" />
-                  <path d="M7 21v1" />
-                  <path d="M17 21v1" />
-                  <path d="M12 21v1" />
-                  <path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
-                </svg>
-              </div>
-              <span className="text-[9px] font-medium text-emerald-400/70 tracking-wider">ALEX</span>
-            </div>
-            <div className="flex-1 bg-[#1A2332] border border-emerald-500/20 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: '0ms' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: '200ms' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: '400ms' }} />
-                </div>
-                <span className="text-[10px] text-emerald-400/60">Analisando conversa...</span>
-              </div>
-              <div className="space-y-1.5">
-                <div className="h-2.5 bg-white/5 rounded-full w-3/4 animate-pulse" />
-                <div className="h-2.5 bg-white/5 rounded-full w-1/2 animate-pulse" />
-              </div>
-            </div>
-          </div>
-        )}
-        {suggestion && !suggesting && (
-          <div className="absolute bottom-full left-0 right-0 mx-4 mb-2 animate-in slide-in-from-bottom-2 fade-in duration-300">
-            <div className="flex items-start gap-2.5">
-              <div className="shrink-0 flex flex-col items-center gap-1 pt-1">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                  <svg viewBox="0 0 24 24" className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="11" width="18" height="10" rx="2" />
-                    <circle cx="8" cy="14" r="0.5" fill="currentColor" />
-                    <circle cx="12" cy="14" r="0.5" fill="currentColor" />
-                    <circle cx="16" cy="14" r="0.5" fill="currentColor" />
-                    <path d="M7 21v1" />
-                    <path d="M17 21v1" />
-                    <path d="M12 21v1" />
-                    <path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
-                  </svg>
-                </div>
-                <span className="text-[9px] font-medium text-emerald-400/70 tracking-wider">ALEX</span>
-              </div>
-              <div className="flex-1 bg-[#1A2332] border border-emerald-500/20 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[11px] font-medium text-emerald-400">Sugestão</span>
-                  <button
-                    onClick={() => setSuggestion('')}
-                    className="text-gray-500 hover:text-gray-300 transition-colors"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-                <p className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{suggestion}</p>
-                <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-white/[0.06]">
-                  <button
-                    onClick={() => { setNewMessage(suggestion); setSuggestion('') }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium rounded-lg transition-all active:scale-95"
-                  >
-                    <Send size={11} />
-                    Usar resposta
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        <div className="flex items-end gap-2">
-          <button
-            onClick={handleSuggest}
-            disabled={suggesting}
-            className="text-gray-400 hover:text-emerald-400 disabled:opacity-40 p-2 rounded-lg hover:bg-emerald-400/10 transition-colors shrink-0 relative group"
-            title="Pedir sugestão ao Alex"
-          >
-            <div className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              <svg viewBox="0 0 24 24" className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          <div className="flex items-center gap-2 mb-3 px-3 py-2.5 bg-emerald-500/8 border border-emerald-500/20 rounded-xl">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shrink-0 animate-bounce-sm">
+              <svg viewBox="0 0 24 24" className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="8" cy="14" r="0.5" fill="currentColor" /><circle cx="12" cy="14" r="0.5" fill="currentColor" /><circle cx="16" cy="14" r="0.5" fill="currentColor" /><path d="M7 21v1" /><path d="M17 21v1" /><path d="M12 21v1" /><path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
               </svg>
             </div>
-            <svg viewBox="0 0 24 24" className={`w-[18px] h-[18px] ${suggesting ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="10" rx="2" />
-              <circle cx="8" cy="14" r="0.5" fill="currentColor" />
-              <circle cx="12" cy="14" r="0.5" fill="currentColor" />
-              <circle cx="16" cy="14" r="0.5" fill="currentColor" />
-              <path d="M7 21v1" />
-              <path d="M17 21v1" />
-              <path d="M12 21v1" />
-              <path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
-            </svg>
-          </button>
-          {mediaPreview ? (
-            <div className="flex-1 bg-[#1A2332] border border-emerald-500/20 rounded-lg p-2">
-              <div className="flex items-center gap-2 mb-2">
-                {mediaPreview.type === 'image' && <Image size={14} className="text-emerald-400" />}
-                {mediaPreview.type === 'audio' && <Mic size={14} className="text-emerald-400" />}
-                {mediaPreview.type === 'video' && <Video size={14} className="text-emerald-400" />}
-                {mediaPreview.type === 'document' && <FileText size={14} className="text-emerald-400" />}
-                <span className="text-xs text-gray-400 truncate flex-1">{mediaPreview.name}</span>
-                <button onClick={() => setMediaPreview(null)} className="text-gray-500 hover:text-white">
-                  <X size={14} />
-                </button>
+            <div className="flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: '0ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: '200ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ animationDelay: '400ms' }} />
+            </div>
+            <span className="text-xs text-emerald-500">Alex analisando...</span>
+          </div>
+        )}
+
+        {/* Alex suggestion — result */}
+        {suggestion && !suggesting && (
+          <div className="mb-3 bg-bg-input border border-emerald-500/25 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <div className="w-5 h-5 rounded-md bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center">
+                  <svg viewBox="0 0 24 24" className="w-3 h-3 text-white" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="8" cy="14" r="0.5" fill="currentColor" /><circle cx="12" cy="14" r="0.5" fill="currentColor" /><circle cx="16" cy="14" r="0.5" fill="currentColor" /><path d="M7 21v1" /><path d="M17 21v1" /><path d="M12 21v1" /><path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
+                  </svg>
+                </div>
+                <span className="text-xs font-semibold text-emerald-500">Sugestão do Alex</span>
               </div>
-              {mediaPreview.type === 'image' && (
-                <img src={mediaPreview.data} alt="Preview" className="max-h-24 rounded object-contain mb-2" />
-              )}
-              <textarea
+              <button onClick={() => setSuggestion('')} className="text-text-secondary hover:text-text-primary transition-colors">
+                <X size={13} />
+              </button>
+            </div>
+            <p className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed mb-2.5">{suggestion}</p>
+            <button
+              onClick={() => { setNewMessage(suggestion); setSuggestion('') }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-white text-xs font-medium rounded-lg transition-all active:scale-95"
+            >
+              <Send size={11} /> Usar resposta
+            </button>
+          </div>
+        )}
+
+        {/* Media preview */}
+        {mediaPreview && (
+          <div className="mb-3 bg-bg-input border border-border rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-2">
+              {mediaPreview.type === 'image' && <Image size={14} className="text-emerald-500 shrink-0" />}
+              {mediaPreview.type === 'audio' && <Mic size={14} className="text-emerald-500 shrink-0" />}
+              {mediaPreview.type === 'video' && <Video size={14} className="text-emerald-500 shrink-0" />}
+              {mediaPreview.type === 'document' && <FileText size={14} className="text-emerald-500 shrink-0" />}
+              <span className="text-xs text-text-secondary truncate flex-1">{mediaPreview.name}</span>
+              <button onClick={() => setMediaPreview(null)} className="text-text-secondary hover:text-text-primary transition-colors shrink-0">
+                <X size={14} />
+              </button>
+            </div>
+            {mediaPreview.type === 'image' && (
+              <img src={mediaPreview.data} alt="Preview" className="max-h-28 rounded-lg object-contain mb-2" />
+            )}
+            <div className="flex gap-2">
+              <input
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 placeholder="Legenda (opcional)..."
-                rows={1}
-                className="w-full bg-bg-card border border-border rounded-lg px-2 py-1.5 text-sm text-text-primary placeholder-gray-500 focus:outline-none focus:border-emerald-400 resize-none"
+                className="flex-1 bg-bg-card border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder-gray-400 focus:outline-none focus:border-emerald-400"
               />
-              <div className="flex justify-end gap-2 mt-2">
-                <button
-                  onClick={handleSendMedia}
-                  disabled={sendingMedia}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-all active:scale-95"
-                >
-                  {sendingMedia ? 'Enviando...' : 'Enviar mídia'}
-                </button>
-              </div>
+              <button
+                onClick={handleSendMedia}
+                disabled={sendingMedia}
+                className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-all active:scale-95 shrink-0"
+              >
+                {sendingMedia ? '...' : 'Enviar'}
+              </button>
             </div>
-          ) : (
-            <div className="flex-1 relative">
-              <textarea
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Digite sua mensagem..."
-                rows={1}
-                className="w-full bg-bg-card border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder-gray-500 focus:outline-none focus:border-emerald-400 resize-none max-h-32"
-              />
+          </div>
+        )}
+
+        {/* Recording indicator */}
+        {isRecording && (
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-lg flex-1">
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+              <span className="text-xs text-red-500 font-mono tabular-nums">
+                {String(Math.floor(recordingDuration / 60)).padStart(2, '0')}:{String(recordingDuration % 60).padStart(2, '0')}
+              </span>
+              <span className="text-xs text-text-secondary ml-1">Gravando...</span>
             </div>
-          )}
-          {!mediaPreview && (
+            <button
+              onClick={stopRecording}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-400 text-white text-xs font-medium rounded-lg transition-all active:scale-95 shrink-0"
+            >
+              <span className="w-3 h-3 rounded-sm bg-white shrink-0" /> Parar
+            </button>
+          </div>
+        )}
+
+        {/* Text input row */}
+        {!mediaPreview && (
+          <div className="flex items-end gap-2">
+            <button
+              onClick={handleSuggest}
+              disabled={suggesting}
+              className="text-text-secondary hover:text-emerald-500 disabled:opacity-40 p-2 rounded-xl hover:bg-emerald-500/10 transition-colors shrink-0"
+              title="Sugestão do Alex"
+            >
+              <svg viewBox="0 0 24 24" className={`w-5 h-5 ${suggesting ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="8" cy="14" r="0.5" fill="currentColor" /><circle cx="12" cy="14" r="0.5" fill="currentColor" /><circle cx="16" cy="14" r="0.5" fill="currentColor" /><path d="M7 21v1" /><path d="M17 21v1" /><path d="M12 21v1" /><path d="M4 11V7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v4" />
+              </svg>
+            </button>
+            <textarea
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Mensagem..."
+              rows={1}
+              className="flex-1 bg-bg-input border border-border rounded-2xl px-4 py-2.5 text-sm text-text-primary placeholder-gray-400 focus:outline-none focus:border-emerald-400 resize-none max-h-32 transition-colors"
+            />
             <button
               onClick={handleSend}
               disabled={!newMessage.trim() || sending}
-              className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-white p-2 rounded-lg transition-colors shrink-0"
+              className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-white p-2.5 rounded-xl transition-all active:scale-95 shrink-0"
             >
-              <Send size={18} className={sending ? 'animate-pulse' : ''} />
+              <Send size={16} className={sending ? 'animate-pulse' : ''} />
             </button>
-          )}
           </div>
-          {isRecording ? (
-            <div className="flex items-center gap-2 mt-1.5">
-              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/30 rounded-lg">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-xs text-red-400 font-mono tabular-nums">
-                  {String(Math.floor(recordingDuration / 60)).padStart(2, '0')}:
-                  {String(recordingDuration % 60).padStart(2, '0')}
-                </span>
-              </div>
-              <button
-                onClick={stopRecording}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-400 text-white text-xs font-medium rounded-lg transition-all active:scale-95"
-              >
-                <span className="w-3.5 h-3.5 rounded-sm bg-white" />
-                Parar
-              </button>
-            </div>
-          ) : !mediaPreview && (
-            <div className="flex items-center gap-1 mt-1.5 justify-end">
-              <button
-                onClick={() => handleFilePick('image/*', 'image')}
-                className="text-gray-500 hover:text-emerald-400 p-1 rounded hover:bg-emerald-400/10 transition-colors"
-                title="Enviar imagem"
-              >
-                <Image size={14} />
-              </button>
-              <button
-                onClick={startRecording}
-                className="text-gray-500 hover:text-red-400 p-1 rounded hover:bg-red-400/10 transition-colors"
-                title="Gravar áudio"
-              >
-                <Mic size={14} />
-              </button>
-              <button
-                onClick={() => handleFilePick('video/*', 'video')}
-                className="text-gray-500 hover:text-emerald-400 p-1 rounded hover:bg-emerald-400/10 transition-colors"
-                title="Enviar vídeo"
-              >
-                <Video size={14} />
-              </button>
-              <button
-                onClick={() => handleFilePick('.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,.rar', 'document')}
-                className="text-gray-500 hover:text-emerald-400 p-1 rounded hover:bg-emerald-400/10 transition-colors"
-                title="Enviar documento"
-              >
-                <FileText size={14} />
-              </button>
-            </div>
-          )}
+        )}
+
+        {/* Media buttons */}
+        {!mediaPreview && !isRecording && (
+          <div className="flex items-center gap-1 mt-2 pl-1">
+            <button onClick={() => handleFilePick('image/*', 'image')} className="text-text-secondary hover:text-emerald-500 p-1.5 rounded-lg hover:bg-emerald-500/10 transition-colors" title="Imagem">
+              <Image size={15} />
+            </button>
+            <button onClick={startRecording} className="text-text-secondary hover:text-red-500 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors" title="Gravar áudio">
+              <Mic size={15} />
+            </button>
+            <button onClick={() => handleFilePick('video/*', 'video')} className="text-text-secondary hover:text-emerald-500 p-1.5 rounded-lg hover:bg-emerald-500/10 transition-colors" title="Vídeo">
+              <Video size={15} />
+            </button>
+            <button onClick={() => handleFilePick('.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,.rar', 'document')} className="text-text-secondary hover:text-emerald-500 p-1.5 rounded-lg hover:bg-emerald-500/10 transition-colors" title="Documento">
+              <FileText size={15} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

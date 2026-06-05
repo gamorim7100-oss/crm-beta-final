@@ -71,6 +71,39 @@ export function getCurrentFiscalMonth(): { year: number; month: number } {
   return { year: prev.getFullYear(), month: prev.getMonth() + 1 }
 }
 
+// Retorna o 5º dia útil (seg-sex) de um dado mês/ano
+export function getFifthBusinessDay(year: number, month: number): Date {
+  let count = 0
+  let day = 1
+  while (count < 5) {
+    const d = new Date(year, month - 1, day)
+    const dow = d.getDay()
+    if (dow !== 0 && dow !== 6) count++
+    if (count < 5) day++
+  }
+  return new Date(year, month - 1, day)
+}
+
+// Após o 5º dia útil do mês, projeta o mês fiscal SEGUINTE
+export function getSalaryFiscalMonth(): { year: number; month: number; isNextMonth: boolean } {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth() + 1 // 1-12
+  const fifthBD = getFifthBusinessDay(year, month)
+
+  if (now >= fifthBD) {
+    // Próximo mês fiscal
+    const nextDate = new Date(year, month, 1) // 1º do mês seguinte
+    return {
+      year: nextDate.getFullYear(),
+      month: nextDate.getMonth() + 1,
+      isNextMonth: true,
+    }
+  }
+
+  return { ...getCurrentFiscalMonth(), isNextMonth: false }
+}
+
 export function getFiscalMonthRange(year: number, month: number): { start: Date; end: Date } {
   const start = new Date(year, month - 2, 16, 0, 0, 0)
   const end = new Date(year, month - 1, 15, 23, 59, 59)
@@ -147,73 +180,34 @@ export async function getClientsNeedingAttention(
 ): Promise<AttentionAlert[]> {
   const today = new Date()
   const dayOfMonth = today.getDate()
+  const monthName = today.toLocaleString('pt-BR', { month: 'long' }).toLowerCase()
+  const isAssembleiaDay = isTodayAssembleiaAlertDay()
+
+  const { data: clients } = await supabase
+    .from('clients')
+    .select('id, name, phone, status, payment_day, regra_da_venda, mes_oferta, consortium_type, contract_value, grupo, cota, cpf, email, data_fechamento, criterio_de_lance')
+    .eq('user_id', userId)
+    .eq('status', 'ativo')
+
+  if (!clients?.length) return []
+
   const alerts: AttentionAlert[] = []
 
-  const { data: boletoClients } = await supabase
-    .from('clients')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'ativo')
-    .eq('payment_day', dayOfMonth)
+  const boletoHoje = clients.filter((c) => c.payment_day === dayOfMonth)
+  if (boletoHoje.length) alerts.push({ reason: 'Boleto vence hoje', clients: boletoHoje as Client[] })
 
-  if (boletoClients?.length) {
-    alerts.push({ reason: 'Boleto vence hoje', clients: boletoClients as Client[] })
+  const boletoAmanha = clients.filter((c) => c.payment_day === dayOfMonth + 1)
+  if (boletoAmanha.length) alerts.push({ reason: 'Boleto vence amanhã', clients: boletoAmanha as Client[] })
+
+  if (isAssembleiaDay) {
+    alerts.push({ reason: 'Dia da Assembleia — avisar todos os clientes', clients: clients as Client[] })
+
+    const lanceEmbutido = clients.filter((c) => c.regra_da_venda === 'lance_embutido_sempre')
+    if (lanceEmbutido.length) alerts.push({ reason: 'Verificar lances embutidos na assembleia', clients: lanceEmbutido as Client[] })
   }
 
-  const { data: tomorrowClients } = await supabase
-    .from('clients')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'ativo')
-    .eq('payment_day', dayOfMonth + 1)
-
-  if (tomorrowClients?.length) {
-    alerts.push({ reason: 'Boleto vence amanhã', clients: tomorrowClients as Client[] })
-  }
-
-  if (isTodayAssembleiaAlertDay()) {
-    const { data: assembleiaClients } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('status', 'ativo')
-
-    if (assembleiaClients?.length) {
-      alerts.push({
-        reason: 'Dia da Assembleia — avisar todos os clientes',
-        clients: assembleiaClients as Client[],
-      })
-    }
-
-    const { data: lanceClients } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('status', 'ativo')
-      .eq('regra_da_venda', 'lance_embutido_sempre')
-
-    if (lanceClients?.length) {
-      alerts.push({
-        reason: 'Verificar lances embutidos na assembleia',
-        clients: lanceClients as Client[],
-      })
-    }
-  }
-
-  const monthName = today.toLocaleString('pt-BR', { month: 'long' }).toLowerCase()
-  const { data: mesEspecificoClients } = await supabase
-    .from('clients')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'ativo')
-    .ilike('mes_oferta', monthName)
-
-  if (mesEspecificoClients?.length) {
-    alerts.push({
-      reason: `Mês de oferta de lance — ${monthName}`,
-      clients: mesEspecificoClients as Client[],
-    })
-  }
+  const mesEspecifico = clients.filter((c) => c.mes_oferta?.toLowerCase() === monthName)
+  if (mesEspecifico.length) alerts.push({ reason: `Mês de oferta de lance — ${monthName}`, clients: mesEspecifico as Client[] })
 
   return alerts
 }

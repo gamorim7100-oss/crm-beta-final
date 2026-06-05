@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Lead, Message } from '@/types'
+import { MESSAGES_CACHE_LIMIT } from '@/lib/constants'
 
 interface LeadsState {
   leads: Lead[]
@@ -7,7 +8,6 @@ interface LeadsState {
   messages: Record<string, Message[]>
   unreadCount: number
   posVendaUnreadCount: number
-  isLoading: boolean
   setLeads: (leads: Lead[]) => void
   setSelectedLead: (lead: Lead | null) => void
   updateLeadStatus: (leadId: string, status: Lead['status'], kanbanPosition: number) => void
@@ -15,7 +15,6 @@ interface LeadsState {
   setMessages: (leadId: string, messages: Message[]) => void
   setUnreadCount: (count: number) => void
   setPosVendaUnreadCount: (count: number) => void
-  setLoading: (loading: boolean) => void
   addLead: (lead: Lead) => void
 }
 
@@ -25,7 +24,6 @@ export const useLeadsStore = create<LeadsState>((set) => ({
   messages: {},
   unreadCount: 0,
   posVendaUnreadCount: 0,
-  isLoading: false,
 
   setLeads: (leads) => set({ leads }),
 
@@ -47,18 +45,21 @@ export const useLeadsStore = create<LeadsState>((set) => ({
     })),
 
   setMessages: (leadId, messages) =>
-    set((state) => ({
-      messages: { ...state.messages, [leadId]: messages },
-    })),
+    set((state) => {
+      const updated = { ...state.messages, [leadId]: messages }
+      const keys = Object.keys(updated)
+      if (keys.length > MESSAGES_CACHE_LIMIT) {
+        const toRemove = keys.slice(0, keys.length - MESSAGES_CACHE_LIMIT)
+        toRemove.forEach((k) => delete updated[k])
+      }
+      return { messages: updated }
+    }),
 
   setUnreadCount: (unreadCount) => set({ unreadCount }),
   setPosVendaUnreadCount: (posVendaUnreadCount) => set({ posVendaUnreadCount }),
-
-  setLoading: (isLoading) => set({ isLoading }),
 
   addLead: (lead) =>
     set((state) => ({
       leads: [...state.leads, lead],
     })),
 }))
-

@@ -2,9 +2,10 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { MessageCircle, Clock, User, Trash2 } from 'lucide-react'
+import { MessageCircle, Clock, Trash2 } from 'lucide-react'
 import type { Lead } from '@/types'
 import { formatPhone } from '@/lib/business-rules'
+import { CONSORTIUM_LABELS, CONSORTIUM_BADGE_COLORS } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 
 interface LeadCardProps {
@@ -12,18 +13,6 @@ interface LeadCardProps {
   onClick: () => void
   onConvert?: () => void
   onDelete?: () => void
-}
-
-const TYPE_LABELS: Record<string, string> = {
-  automovel: 'Automóvel',
-  imoveis: 'Imóveis',
-  outros: 'Outros',
-}
-
-const TYPE_COLORS: Record<string, string> = {
-  automovel: 'bg-blue-500/20 text-blue-400',
-  imoveis: 'bg-emerald-500/20 text-emerald-400',
-  outros: 'bg-yellow-500/20 text-yellow-400',
 }
 
 function getInitials(name?: string): string {
@@ -101,11 +90,14 @@ export function LeadCard({ lead, onClick, onConvert, onDelete }: LeadCardProps) 
       <div className="flex items-start gap-3">
         <div
           className={cn(
-            'w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0',
-            getAvatarColor(lead.name)
+            'w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 overflow-hidden',
+            !lead.avatar_url && getAvatarColor(lead.name)
           )}
         >
-          {getInitials(lead.name)}
+          {lead.avatar_url && lead.avatar_url !== 'none'
+            ? <img src={lead.avatar_url} alt={lead.name || ''} className="w-full h-full object-cover" />
+            : getInitials(lead.name)
+          }
         </div>
 
         {onDelete && (
@@ -130,10 +122,10 @@ export function LeadCard({ lead, onClick, onConvert, onDelete }: LeadCardProps) 
             <span
               className={cn(
                 'inline-block text-[10px] font-medium px-1.5 py-0.5 rounded mt-1',
-                TYPE_COLORS[lead.consortium_interest]
+                CONSORTIUM_BADGE_COLORS[lead.consortium_interest]
               )}
             >
-              {TYPE_LABELS[lead.consortium_interest]}
+              {CONSORTIUM_LABELS[lead.consortium_interest]}
             </span>
           )}
 

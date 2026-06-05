@@ -7,6 +7,7 @@ import { TopBar } from '@/components/shared/TopBar'
 import { ThemeProvider } from '@/lib/theme-context'
 import { createClient } from '@/lib/supabase/client'
 import { MessageNotification } from '@/components/shared/MessageNotification'
+import { MeetingReminder } from '@/components/shared/MeetingReminder'
 import { SessionTimeout } from '@/components/shared/SessionTimeout'
 import { useSidebarStore } from '@/stores/sidebar.store'
 
@@ -39,6 +40,7 @@ export default function DashboardLayout({
         </div>
       </div>
       <MessageNotification />
+      <MeetingReminder />
       <SessionTimeout />
     </ThemeProvider>
   )

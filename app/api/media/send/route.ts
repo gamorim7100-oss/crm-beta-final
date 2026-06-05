@@ -31,6 +31,11 @@ export async function POST(request: Request) {
       }
     )
 
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { data: lead } = await supabase
       .from('leads')
       .select('phone')
@@ -43,9 +48,9 @@ export async function POST(request: Request) {
 
     const evolutionUrl = process.env.EVOLUTION_API_URL
     const evolutionKey = process.env.EVOLUTION_API_KEY
-    const instanceName = process.env.EVOLUTION_INSTANCE_NAME
+    const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'markello'
 
-    if (!evolutionUrl || !evolutionKey || !instanceName) {
+    if (!evolutionUrl || !evolutionKey) {
       return NextResponse.json({ error: 'Evolution API not configured' }, { status: 500 })
     }
 
@@ -120,8 +125,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
-    console.error('Media send error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: 'Erro interno ao enviar mídia' }, { status: 500 })
   }
 }
 

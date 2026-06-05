@@ -57,6 +57,14 @@ export default function LoginPage() {
 
       <div className="flex-1 flex items-center justify-center bg-white p-8">
         <div className="w-full max-w-sm">
+          <p className="text-xs text-gray-400 text-center mb-6">
+            Ao acessar, você concorda com nossa{' '}
+            <a href="/privacidade" target="_blank" className="underline hover:text-gray-600">
+              Política de Privacidade
+            </a>
+            .
+          </p>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm text-gray-600 mb-1">Email</label>

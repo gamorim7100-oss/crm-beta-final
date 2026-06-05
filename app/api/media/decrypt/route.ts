@@ -40,6 +40,23 @@ export async function GET(request: Request) {
 
     const cookieStore = cookies()
 
+    const anonSupabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) { return cookieStore.get(name)?.value },
+          set(name: string, value: string, options: CookieOptions) {},
+          remove(name: string, options: CookieOptions) {},
+        },
+      }
+    )
+
+    const { data: { user } } = await anonSupabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -54,9 +71,21 @@ export async function GET(request: Request) {
 
     const { data: msg } = await supabase
       .from('messages')
-      .select('message_data, media_type')
+      .select('message_data, media_type, lead_id')
       .eq('id', messageId)
       .single()
+
+    if (msg?.lead_id) {
+      const { data: lead } = await supabase
+        .from('leads')
+        .select('user_id')
+        .eq('id', msg.lead_id)
+        .eq('user_id', user.id)
+        .single()
+      if (!lead) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
 
     if (!msg?.message_data || !msg.media_type) {
       return NextResponse.json({ error: 'No media data' }, { status: 404 })

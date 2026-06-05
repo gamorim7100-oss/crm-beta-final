@@ -43,6 +43,7 @@ interface PosVendaItem {
   notes?: string
   unread_count?: number
   last_message_text?: string
+  avatar_url?: string | null
 }
 
 export default function PosVendaPage() {
@@ -65,16 +66,16 @@ export default function PosVendaPage() {
       const [leadsRes, clientsRes, allLeadsRes] = await Promise.all([
         supabase
           .from('leads')
-          .select('*')
+          .select('id, name, phone, status, notes, unread_count, last_message_text, avatar_url')
           .eq('user_id', user.id)
           .eq('status', 'venda_concluida'),
         supabase
           .from('clients')
-          .select('*')
+          .select('id, name, phone, email, cpf, status, grupo, cota, consortium_type, contract_value, data_fechamento, criterio_de_lance')
           .eq('user_id', user.id),
         supabase
           .from('leads')
-          .select('*')
+          .select('id, name, phone, unread_count, last_message_text, avatar_url')
           .eq('user_id', user.id),
       ])
 
@@ -133,7 +134,12 @@ export default function PosVendaPage() {
       clientGroups.forEach((client) => {
         if (client.phone) seenPhones.add(client.phone)
         const match = client.phone ? leadsByPhone.current.get(client.phone) : undefined
-        merged.push({ ...client, unread_count: (match as any)?.unread_count || undefined, last_message_text: (match as any)?.last_message_text || undefined })
+        merged.push({
+          ...client,
+          unread_count: (match as any)?.unread_count || undefined,
+          last_message_text: (match as any)?.last_message_text || undefined,
+          avatar_url: (match as any)?.avatar_url || null,
+        })
       })
 
       for (const l of leadsRes.data || []) {
@@ -151,6 +157,7 @@ export default function PosVendaPage() {
           notes: l.notes || undefined,
           unread_count: (l as any).unread_count,
           last_message_text: (l as any).last_message_text || undefined,
+          avatar_url: (l as any).avatar_url || null,
         })
       }
 
@@ -276,8 +283,11 @@ export default function PosVendaPage() {
                   : 'bg-bg-card border border-white/[0.06] hover:border-emerald-500/30'
               }`}
             >
-              <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-                <BadgeCheck size={16} className="text-emerald-400" />
+              <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0 overflow-hidden">
+                {item.avatar_url && item.avatar_url !== 'none'
+                  ? <img src={item.avatar_url} alt={item.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                  : <BadgeCheck size={16} className="text-emerald-400" />
+                }
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">

@@ -10,6 +10,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'leadId and content required' }, { status: 400 })
     }
 
+    const evolutionUrl = process.env.EVOLUTION_API_URL
+    const evolutionKey = process.env.EVOLUTION_API_KEY
+    const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'markello'
+
+    if (!evolutionUrl || !evolutionKey) {
+      return NextResponse.json({ error: 'Evolution API não configurada' }, { status: 500 })
+    }
+
     const cookieStore = cookies()
 
     const supabase = createServerClient(
@@ -17,9 +25,7 @@ export async function POST(request: Request) {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
-          },
+          get(name: string) { return cookieStore.get(name)?.value },
           set(name: string, value: string, options: CookieOptions) {},
           remove(name: string, options: CookieOptions) {},
         },
@@ -36,33 +42,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
     }
 
-    let evolutionResult: any = { key: { id: null } }
+    let number = lead.phone
+    if (!number.startsWith('55')) number = `55${number}`
 
-    if (process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY) {
-      let number = lead.phone
-      if (!number.startsWith('55')) number = `55${number}`
-
-      const response = await fetch(
-        `${process.env.EVOLUTION_API_URL}/message/sendText/${process.env.EVOLUTION_INSTANCE_NAME}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: process.env.EVOLUTION_API_KEY,
-          },
-          body: JSON.stringify({
-            number,
-            text: content,
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error(`Evolution API error: ${response.statusText}`)
+    const evoResponse = await fetch(
+      `${evolutionUrl}/message/sendText/${instanceName}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: evolutionKey,
+        },
+        body: JSON.stringify({ number, text: content }),
       }
+    )
 
-      evolutionResult = await response.json()
+    if (!evoResponse.ok) {
+      const errText = await evoResponse.text().catch(() => '')
+      return NextResponse.json(
+        { error: `Falha ao enviar: ${evoResponse.status} ${errText}` },
+        { status: 502 }
+      )
     }
+
+    const evolutionResult = await evoResponse.json()
 
     await supabase.from('messages').insert({
       lead_id: leadId,
@@ -84,8 +87,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
-    console.error('Send message error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ error: 'Erro interno ao enviar mensagem' }, { status: 500 })
   }
 }
-

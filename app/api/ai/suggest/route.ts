@@ -26,7 +26,7 @@ export async function POST(request: Request) {
 
     const { data: lead } = await supabase
       .from('leads')
-      .select('name, phone')
+      .select('id')
       .eq('id', leadId)
       .single()
 
@@ -81,7 +81,7 @@ Regras:
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Analise esta conversa e sugira uma resposta para o lead ${lead.name || 'cliente'}:\n\n${conversation}\n\n---\nQual a PRÓXIMA mensagem que o consultor deve enviar? Responda apenas com o texto da mensagem:` },
+          { role: 'user', content: `Analise esta conversa e sugira uma resposta para o lead:\n\n${conversation}\n\n---\nQual a PRÓXIMA mensagem que o consultor deve enviar? Responda apenas com o texto da mensagem:` },
         ],
         max_tokens: 200,
         temperature: 0.7,
@@ -90,8 +90,7 @@ Regras:
 
     if (!response.ok) {
       const err = await response.text()
-      console.error('OpenAI error:', err)
-      return NextResponse.json({ error: 'AI API error' }, { status: 502 })
+      return NextResponse.json({ error: 'Erro ao consultar IA' }, { status: 502 })
     }
 
     const data = await response.json()
@@ -105,8 +104,7 @@ Regras:
 
     return NextResponse.json({ suggestion })
   } catch (error) {
-    console.error('AI suggest error:', error)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+    return NextResponse.json({ error: 'Erro interno' }, { status: 500 })
   }
 }
 
